@@ -51,7 +51,9 @@ def process_image(request):
             return HttpResponseBadRequest('Problems with your photo')
 
         # Decodifica l'immagine utilizzando cv2.imdecode
+        # Crea un array numpy di tipo np.uint8
         nparr_now = np.frombuffer(photo_now, np.uint8)
+        # Decodificata come immagine a colori
         img_now = cv2.imdecode(nparr_now, cv2.IMREAD_COLOR)
 
         # Ritaglia l'immagine del volto
@@ -63,10 +65,10 @@ def process_image(request):
             transform = transforms.Compose([
                 transforms.Resize(224),
                 transforms.CenterCrop(224),
-                transforms.ToTensor(),
+                transforms.ToTensor(),                              # Converte l'immagine in un tensore di tipo torch.Tensor
                 transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
-            ])
+            ])                                                      # Risultato: tensore normalizzato di dimensione 3x224x224
 
             # Convert the image from BGR to RGB
             image = np.asarray(photo_now)[:, :, [2, 1, 0]]  # Swap the order of the channels from BGR to RGB
@@ -79,13 +81,15 @@ def process_image(request):
             img_tensor = transform(image).unsqueeze(0)
 
             # Utilizza il modello per effettuare una predizione
-            with torch.no_grad():
-                model.eval()
-                outputs = model(img_tensor)
-                predicted = F.softmax(outputs, dim=1)
+            with torch.no_grad():                       # Calcolo del gradiente dei tensori è disabilitato in questo codice
+                model.eval()                            # Imposta il modello in modalità valutazione
+                outputs = model(img_tensor)             # è un tensore con i punteggi di ogni possibile classe di output
+                predicted = F.softmax(outputs, dim=1)   # Softmax normalizza un vettore dove ogni valore rappresenta la probabilità che l'input appartenga
+                                                        # ad una classe. dim=1 la normalizzazione viene applicata all'asse 1 cioè sulla colonna 1 
+                                                        # quindi a ciascuna riga del tensore outputs
 
             # Ottieni il valore di probabilità della classe positiva (indice 1)
-            positive_prob = predicted[0][1].item()
+            positive_prob = predicted[0][1].item()      # Estrae la probabilità in [0][1] e con item() la converte da tensore in float
 
             # Stampa i valori di probabilità predetti
             print(f"Predicted probabilities: {predicted}")
@@ -169,14 +173,15 @@ def update_model(request):
 
 def create_new_model():
     num_classes = 2
-    # Carica una CNN pre-addestrata
+    # Carica un modello di rete neurale convoluzionale pre-addestrato: la rete neurale ResNet-18
     model = models.resnet18(pretrained=True)
 
-    # Sostituisci l'ultimo strato completamente connesso per adattarlo al numero di classi del tuo problema
+    # Sostituisci l'ultimo strato completamente connesso per adattarlo al numero di classi: 2
     num_ftrs = model.fc.in_features
-    model.fc = torch.nn.Linear(num_ftrs, num_classes)
-
+    model.fc = torch.nn.Linear(num_ftrs, num_classes)       # Sostituisce l'ultimo strato della rete con un nuovo strato che ha 2 uscite
+                                                            # una per ogni classe.
     return model
+
 
 def retrain_method(model, photo_now):
     model = retrain_model(model, photo_now)
@@ -227,31 +232,46 @@ def retrain_model(model, photo_now):
     # Apply the transformations to the image
     img_tensor = transform(image).unsqueeze(0)
     # Crea un oggetto di tipo TensorDataset utilizzando l'immagine img_tensor come input e un valore costante 0 come output.
-    dataset = torch.utils.data.TensorDataset(img_tensor, torch.tensor([0]))
+    dataset = torch.utils.data.TensorDataset(img_tensor, torch.tensor([0]))     # TensorDataset è un oggetto utilizzato per rappresentare un dataset
+                                                                                # img_tensor è l'input, torch.tensor([0]) è l'output
 
-    # Addestramento del modello
-    criterion = torch.nn.CrossEntropyLoss()
+    # *** Addestramento del modello ***
+    # Definire la funzione di loss
+    criterion = torch.nn.CrossEntropyLoss()   
+    # Definizione di un algoritmo di ottimizzazione che il modello utilizzerà per aggiornare i pesi: stochastic gradient descent (SGD)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+    # Crea mini-batch. Carica i dati in bath di dimensione batch_size=1 e con ordine casuale (shuffle=True).
+    # Utilizzando il DataLoader di PyTorch, possiamo caricare solo un piccolo batch di dati alla volta, addestrare il modello su quel batch, e poi passare al successivo
+    # Senza caricare l'intero dataset in memoria
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
+    # Addestramento
     for epoch in range(5):
         running_loss = 0.0
+        # Il ciclo itera su tutti i batch nel dataloader di addestramento
         for i, data in enumerate(train_loader, 0):
-            inputs, labels = data
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
+            inputs, labels = data           # Assegna i tensori di input (le immagini) e di output (le etichette) del batch corrente a due variabili separate
+                                            # il DataLoader restituisce un batch di dati sotto forma di una tupla di due tensori: il primo tensor rappresenta gli input del modello 
+                                            # mentre il secondo tensor rappresenta le etichette di classe associate a ciascuna immagine.
+            inputs, labels = inputs.to(device), labels.to(device)   # Sposta i tensori su device
+            optimizer.zero_grad()               # Azzera il gradiente del modello
+            outputs = model(inputs)             # Passa il batch di input attraverso il modello per ottenere le predizioni
+            loss = criterion(outputs, labels)   # Calcola l'errore tra le predizioni del modello e le etichette di output corrette
+            loss.backward()                     # Calcola il gradiente dell'errore rispetto ai parametri del modello
+            optimizer.step()                    # Aggiorna i pesi del modello usando l'algoritmo di ottimizzazione, SGD
+            running_loss += loss.item()         # Aggiorna la somma cumulativa dell'errore per monitorare le prestazioni del modello durante l'addestramento.
         print(f"Epoch {epoch + 1} loss: {running_loss / len(train_loader)}")
 
     return model
 
 
 def crop_face(image):
-    # Usa il classificatore di Haar per rilevare il volto
+    # Usa il classificatore ad albero di Haar per rilevare il volto
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    # Individua tutti i volti
+    # scaleFactor: controlla la scala di ridimensionamento dell'immagine
+    # minNeighbors: il numero minimo di vicini richiesti per considerare un'area come un volto
+    # minSize: la dimensione minima dell'area da considerare come volto
+    # Restituisce un array di tuple con le coordinate dei rettangoli dei volti indivuduati
     faces = face_cascade.detectMultiScale(image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
     # Verifica se è stato trovato un solo volto
