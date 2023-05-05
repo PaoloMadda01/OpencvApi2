@@ -222,18 +222,24 @@ def retrain_model(model, photo_now):
                              std=[0.229, 0.224, 0.225])
     ])
 
-    # Convert the image from BGR to RGB
-    image = photo_now[:, :, [2, 1, 0]]  # Swap the order of the channels from BGR to RGB
+    # Load correct image
+    image = Image.open(photo_now).convert("RGB")
+    img_tensor1 = transform(image).unsqueeze(0)
+    target1 = torch.tensor([1])  # Set target to 1
 
-    # Convert the image from numpy array to PIL image
-    image = Image.fromarray(image)
+    # Load incorrect image
+    img_path = "path/to/incorrect/image.jpg"
+    image = Image.open(img_path).convert("RGB")
+    img_tensor2 = transform(image).unsqueeze(0)
+    target2 = torch.tensor([0])  # Set target to 0
 
-    # Convert the image to a PyTorch tensor and apply transformations with cv2
-    # Apply the transformations to the image
-    img_tensor = transform(image).unsqueeze(0)
+    # Concatenate tensors and targets
+    img_tensor = torch.cat((img_tensor1, img_tensor2))
+    targets = torch.cat((target1, target2))
+
+
     # Crea un oggetto di tipo TensorDataset utilizzando l'immagine img_tensor come input e un valore costante 0 come output.
-    dataset = torch.utils.data.TensorDataset(img_tensor, torch.tensor([0]))     # TensorDataset è un oggetto utilizzato per rappresentare un dataset
-                                                                                # img_tensor è l'input, torch.tensor([0]) è l'output
+    dataset = torch.utils.data.TensorDataset(img_tensor, targets)     # TensorDataset è un oggetto utilizzato per rappresentare un dataset
 
     # *** Addestramento del modello ***
     # Definire la funzione di loss
@@ -262,6 +268,7 @@ def retrain_model(model, photo_now):
         print(f"Epoch {epoch + 1} loss: {running_loss / len(train_loader)}")
 
     return model
+
 
 
 def crop_face(image):
